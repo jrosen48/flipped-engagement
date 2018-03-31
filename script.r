@@ -4,8 +4,7 @@ library(tidyverse)
 library(haven)
 library(nlme)
 library(patchwork)
-library(broom.mixed)
-library(broom)
+library(konfound)
 
 # Loading data
 
@@ -36,12 +35,6 @@ sample_n_groups = function(tbl, size, replace = FALSE, weight = NULL) {
   tbl %>% right_join(keep, by=grps) %>% group_by_(.dots = grps)
 }
 
-# > 273/2
-# [1] 136.5
-# 
-# > 273/4
-# [1] 68.25
-
 p1 <- recode_df %>%
   group_by(date, student_ID) %>%
   summarize(sum_tw = sum(time_watched_minutes)) %>% 
@@ -68,7 +61,7 @@ p1 <- recode_df %>%
   geom_vline(aes(xintercept = lubridate::ymd("2015-05-07"))) +
   geom_text(aes(x = lubridate::ymd("2015-05-01"), y = -12.5), label = "Final", family = "Times")
 
-uid <- pp$data$student_ID
+uid <- p1$data$student_ID
 
 p2 <- recode_df %>%
   filter(date >= lubridate::ymd("2015-02-04") & date <= lubridate::ymd("2015-03-02")) %>% 
@@ -106,8 +99,8 @@ wave_plotter <- function(n_waves) {
     group_by(student_ID, wave) %>% 
     summarize(stwm = sum(time_watched_minutes)) %>% 
     ggplot(aes(x = wave, y = stwm, group = student_ID)) +
-    geom_line() +
-    geom_point() +
+    geom_line(alpha = .5) +
+    geom_point(alpha = .5) +
     theme_bw() +
     xlab("Wave") + 
     ylab("Minutes viewed") +
@@ -128,7 +121,7 @@ w10 <- wave_plotter(10)
 
 pdes <- w2 + w3 + w4 + w5 + w6 + w7 + w8 +w9 + w10 + plot_layout(ncol = 3)
 
-ggsave("descriptive-wave-plot.png", pdes, width = 6.5, height = 8)
+ggsave("descriptive-wave-plot.png", pdes, width = 6.75, height = 8)
 
 # Processing data into five waves
 
@@ -146,6 +139,23 @@ d <- recode %>%
   ungroup() %>% 
   mutate(wave = as.integer(wave))
 
+# GMM
+
+ddd <- spread(d, wave, stwm)
+names(ddd) <- c(c("student_ID"), str_c("T", 1:5))
+ddd <- select(ddd, -student_ID)
+
+library(MplusAutomation)
+
+createMixtures(classes = 1:3, filename_stem = "ex",
+               model_overall = "i s q | T1@0 T2@1 T3@2 T4@3 T5@4;",
+               rdata = ddd,
+               OUTPUT = "tech11 tech14;", usevariables = str_c("T", 1:5))
+
+runModels(filefilter = "ex")
+mplus_output <- readModels(filefilter = "ex")
+plotGrowthMixtures(mplus_output, estimated = TRUE, rawdata = TRUE, time_scale = 0:4)
+
 # Growth modeling
 
 recode.grouped <- groupedData(stwm ~ wave|student_ID, data = d, order.groups = F)
@@ -154,7 +164,6 @@ ctrl <- lmeControl(opt='optim', maxIter=1e8, msMaxIter = 1e8)
 ma1 <- lme(stwm ~ wave + I(wave^2),
            random = ~ wave + I(wave^2), method = "REML",
            data = recode.grouped, na.action = na.omit, control = ctrl)
-
 
 # no random
 mb1 <- lme(stwm ~ wave + I(wave^2),
@@ -238,10 +247,11 @@ top <- dd %>%
   select(variable = rowname, everything(), -vars, -mad, -range, -se)
 
 top %>% mutate_if(is.double, round, digits = 3) %>% 
-  mutate(mean_sd = str_c(mean, " (", sd, ")")) %>% 
-  clipr::write_clip()
-
-top %>% mutate_if(is.double, round, digits = 3) %>% 
+  mutate(mean_sd = str_c(mean, " (", sd, ")"))
+  clipr::write_clip() %>% 
+ 
+top %>% 
+  mutate_if(is.double, round, digits = 3)
   mutate(mean_sd = str_c(mean, " (", sd, ")")) %>% 
   select(mean_sd)
 
@@ -267,7 +277,27 @@ summary(lm(intercept ~ cost_value + perceived_competence, data = dd))
 summary(lm(wave ~ cost_value + perceived_competence, data = dd))
 summary(lm(quad ~ cost_value + perceived_competence, data = dd))
 
+m2a <- lm(intercept ~ cost_value + perceived_competence, data = dd)
+m2b <- lm(wave ~ cost_value + perceived_competence, data = dd)
+m2c <- lm(quad ~ cost_value + perceived_competence, data = dd)
+
+r2glmm::r2beta(m2a)
+r2glmm::r2beta(m2b)
+r2glmm::r2beta(m2c)
+
+konfound(m2a, test_all=T)
+konfound(m2b, test_all=T)
+konfound(m2c, test_all=T)
+
 # predicting outcomes
-summary(lm(scale(Exam2) ~intercept+wave+quad, data = dd))
-summary(lm(scale(FinalExam) ~intercept+wave+quad, data = dd))
-summary(lm(scale(FinalGrade) ~intercept+wave+quad, data = dd))
+m3a <- lm(scale(Exam2) ~intercept+wave+quad, data = dd)
+m3b <- lm(scale(FinalExam) ~intercept+wave+quad, data = dd)
+m3c <- lm(scale(FinalGrade) ~intercept+wave+quad, data = dd)
+
+r2glmm::r2beta(m3a)
+r2glmm::r2beta(m3b)
+r2glmm::r2beta(m3c)
+
+konfound(m3a, test_all=T)
+konfound(m3b, test_all=T)
+konfound(m3c, test_all=T)
