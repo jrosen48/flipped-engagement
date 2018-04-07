@@ -1,0 +1,31 @@
+---
+title: "Example for R-sig-mixed-models"
+author: "Joshua Rosenberg"
+date: "4/7/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(nlme)
+
+d <- read.csv("data-for-example.csv")
+
+recode.grouped <- groupedData(stwm ~ wave|student_ID, data = d, order.groups = F)
+ctrl <- lmeControl(opt = 'optim', maxIter=1e8, msMaxIter = 1e8)
+
+m1 <- lme(stwm ~ wave + I(wave^2),
+          random = ~ wave + I(wave^2), method = "REML",
+          correlation = corAR1(form = ~ wave|student_ID),
+          data = recode.grouped, na.action = na.omit, control = ctrl)
+
+summary(m1)
+
+ranef(m1) %>% 
+  as.data.frame() %>% 
+  cor()
+
+```
